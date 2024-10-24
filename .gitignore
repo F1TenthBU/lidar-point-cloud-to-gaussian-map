@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / compiled Python files
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment directories
+env/
+venv/
+ENV/
+.VENV/
+*.env
+
+# macOS specific files
+.DS_Store
+
+# Secret keys and configuration files
+*.env
+.env.*
+
+# Log files
+*.log
+
+# Ignore database files (if any)
+*.db
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore coverage reports
+htmlcov/
+.coverage
+.tox/
+
+# Ignore compiled files
+*.so
+
+# Ignore system files
+Thumbs.db
+ehthumbs.db
+
+# Ignore editor-specific files
+.vscode/
+.idea/
+
