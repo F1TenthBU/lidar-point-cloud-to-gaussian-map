@@ -1,31 +1,3 @@
-"""
-MIT BWSI Autonomous RACECAR
-MIT License
-racecar-neo-outreach-labs
-
-File Name: lab_c.py
-Title: Lab C - RACECAR Controller
-
-Author: Christopher Lai (MITLL)
-
-Purpose: Using a Python script and the data polled from the controller module,
-write code to replicate a manual control scheme for the RACECAR. Gain a mastery
-in using conditional statements, controller functions and an understanding in the
-rc.drive.set_speed_angle() function. Complete the lines of code under the #TODO indicators 
-to complete the lab.
-
-Expected Outcome: When the user runs the script, they are able to control the RACECAR
-using the following keys:
-- When the right trigger is pressed, the RACECAR drives forward
-- When the left trigger is pressed, the RACECAR drives backward
-- When the left joystick's x-axis has a value of greater than 0, the RACECAR's wheels turns to the right
-- When the value of the left joystick's x-axis is less than 0, the RACECAR's wheels turns to the left
-- When the "A" button is pressed, increase the speed and print the current speed to the terminal window
-- When the "B" button is pressed, reduce the speed and print the current speed to the terminal window
-- When the "X" button is pressed, increase the turning angle and print the current turning angle to the terminal window
-- When the "Y" button is pressed, reduce the turning angle and print the current turning angle to the terminal window
-"""
-
 ########################################################################################
 # Imports
 ########################################################################################
@@ -34,7 +6,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-sys.path.insert(1, '../../library')
+sys.path.insert(1, '../library')
 import racecar_core
 import racecar_utils as rc_utils
 
@@ -58,17 +30,26 @@ accumulated_time = 0  # To accumulate elapsed time
 # Functions from gaussianGenerator.py 
 ########################################################################################
 class GaussianMap:
-    def __init__(self, x_res=300, y_res=300, sigma=10, decay_rate=0.99):
+    def __init__(self, x_res=300, y_res=300, sigma=20):
         self.x_res = x_res
         self.y_res = y_res
         self.sigma = sigma
-        self.decay_rate = decay_rate
         self.gaussian_map = np.zeros((x_res, y_res))
         self.x_center = x_res // 2
         self.y_center = y_res // 2
 
+        # Precompute the Gaussian kernel
+        size = int(6 * sigma)
+        self.half_size = size // 2
+        x = np.arange(-self.half_size, self.half_size + 1)
+        y = np.arange(-self.half_size, self.half_size + 1)
+        xv, yv = np.meshgrid(x, y)
+        self.gaussian_kernel = np.exp(-(xv ** 2 + yv ** 2) / (2 * sigma ** 2))
+
     def update_gaussian_map(self, lidar_samples):
-        self.gaussian_map *= self.decay_rate
+        # Reset the map
+        self.gaussian_map = np.zeros((self.x_res, self.y_res))
+
         num_samples = len(lidar_samples)
         angles = np.linspace(0, 2 * np.pi, num_samples)
 
@@ -77,32 +58,40 @@ class GaussianMap:
                 continue
 
             angle = angles[i]
-            y = int(self.y_center - distance * np.cos(angle))  # Adjust y-axis for correct alignment
-            x = int(self.x_center + distance * np.sin(angle))  # Adjust x-axis for lateral placement
+            y = int(self.y_center - distance * np.cos(angle))
+            x = int(self.x_center + distance * np.sin(angle))
 
             if 0 <= x < self.x_res and 0 <= y < self.y_res:
-                xv, yv = np.meshgrid(np.arange(self.x_res), np.arange(self.y_res))
-                gaussian = np.exp(-((xv - x) ** 2 + (yv - y) ** 2) / (2 * self.sigma ** 2))
-                self.gaussian_map += gaussian
+                x_min = max(x - self.half_size, 0)
+                x_max = min(x + self.half_size + 1, self.x_res)
+                y_min = max(y - self.half_size, 0)
+                y_max = min(y + self.half_size + 1, self.y_res)
+
+                kx_min = max(0, self.half_size - x)
+                kx_max = kx_min + (x_max - x_min)
+                ky_min = max(0, self.half_size - y)
+                ky_max = ky_min + (y_max - y_min)
+
+                self.gaussian_map[y_min:y_max, x_min:x_max] += self.gaussian_kernel[ky_min:ky_max, kx_min:kx_max]
 
     def visualize_gaussian_map(self):
-        plt.clf()  # Clear the previous figure
+        plt.clf()
         plt.imshow(self.gaussian_map, cmap='hot', interpolation='nearest')
         plt.colorbar(label='Intensity')
-        plt.title('Gaussian Map with Decay')
-        plt.pause(0.001)  # Small pause to update the figure without blocking
+        plt.title('Gaussian Map')
+        plt.pause(0.001)
+
+########################################################################################
+# Define the missing update_lidar_and_visualize() function
+########################################################################################
 
 def update_lidar_and_visualize():
-    global accumulated_time
-
+    # Obtain LiDAR samples
     lidar_samples = rc.lidar.get_samples()
     if lidar_samples is not None:
         gaussian_map.update_gaussian_map(lidar_samples)
-
-    # Plot the Gaussian map every second (1.0 seconds)
-    if accumulated_time >= 1.0:
-        gaussian_map.visualize_gaussian_map()
-        accumulated_time = 0  # Reset the accumulated time
+    # Visualize the Gaussian map
+    gaussian_map.visualize_gaussian_map()
 
 ########################################################################################
 # Functions from gaussianMapper.py 
@@ -167,18 +156,17 @@ def update():
 
     # Send the speed and angle values to the RACECAR
     rc.drive.set_speed_angle(speed, angle)
-
-def update_slow(): 
     update_lidar_and_visualize()
 
+# def update_slow(): 
+#     continue
 
-#set a maximum and make the std larger. Keep the last 360 gaussians in a buffer. Delete the rest.
 ########################################################################################
 # DO NOT MODIFY: Register start and update and begin execution
 ########################################################################################
 
 if __name__ == "__main__":   
-    gaussian_map = GaussianMap(sigma=8, decay_rate=0.98)   
+    gaussian_map = GaussianMap(sigma=20)   # Increased sigma for wider Gaussians
     plt.ion()  # Enable interactive mode for plotting
-    rc.set_start_update(start, update, update_slow)
+    rc.set_start_update(start, update)
     rc.go()
