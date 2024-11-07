@@ -30,11 +30,11 @@ using the following keys:
 # Imports
 ########################################################################################
 
-import sys
+import sys, time
 import numpy as np
 import matplotlib.pyplot as plt
-import jax
-import jax.numpy as jnp
+# import jax
+# import jax.numpy as jnp
 
 sys.path.insert(1, '../../library')
 import racecar_core
@@ -64,36 +64,105 @@ UPDATE_INTERVAL = 1.0 / LIDAR_FREQUENCY  # ~0.167 seconds per update
 # GaussianMap Class
 ########################################################################################
 class GaussianMap:
-    def __init__(self, x_res=100, y_res=100, sigma=1.0/30.0, decay_rate=0.99):
+    def __init__(self, x_res=300, y_res=300, sigma=10, decay_rate=0.99):
         self.x_res = x_res
         self.y_res = y_res
         self.sigma = sigma
         self.decay_rate = decay_rate
         self.gaussian_map = np.zeros((x_res, y_res))
-        self.world_width = 1.0
-        self.world_height = 1.0
-        self.x_center = self.world_width / 2
-        self.y_center = self.world_height / 2
+        self.x_center = x_res // 2
+        self.y_center = y_res // 2
+    
+    # Vectorized function
+    def apply_gaussian(self, distance, angle):
+        if distance == 0:
+            return
+
+        y = int(self.y_center - distance * np.cos(angle))  # Adjust y-axis
+        x = int(self.x_center + distance * np.sin(angle))  # Adjust x-axis
+
+        if 0 <= x < self.x_res and 0 <= y < self.y_res:
+            xv, yv = np.meshgrid(np.arange(self.x_res), np.arange(self.y_res))
+            gaussian = np.exp(-((xv - x) ** 2 + (yv - y) ** 2) / (2 * self.sigma ** 2))
+            self.gaussian_map += gaussian  # Accumulate Gaussian data
     
     def update_gaussian_map(self, lidar_samples):
-        # Reset the Gaussian map with JAX zeros array
+        # Modify #1: 
+        # Reset the Gaussian map with zeros array
         self.gaussian_map = np.zeros((self.x_res, self.y_res))
 
         num_samples = len(lidar_samples)
         angles = np.linspace(0, 2 * np.pi, num_samples)
 
+        # Create a Gaussian template within a limited radius
+        radius = int(3 * self.sigma)
+        xv, yv = np.meshgrid(np.arange(-radius, radius + 1), np.arange(-radius, radius + 1))
+        gaussian_template = np.exp(-(xv ** 2 + yv ** 2) / (2 * self.sigma ** 2))
+
+        # Apply the Gaussian template at each lidar sample point
         for i, distance in enumerate(lidar_samples):
             if distance == 0:
                 continue
-            distance *= 1/300.0
-            angle = angles[i]
-            y = self.y_center - distance * np.cos(angle)  # Adjust y-axis
-            x = self.x_center + distance * np.sin(angle)  # Adjust x-axis
 
+            angle = angles[i]
+            y = int(self.y_center - distance * np.cos(angle))
+            x = int(self.x_center + distance * np.sin(angle))
+
+            # Check if the point is within bounds
             if 0 <= x < self.x_res and 0 <= y < self.y_res:
-                xv, yv = np.meshgrid(np.linspace(0, self.world_width, self.x_res), np.linspace(0, self.world_height, self.y_res))
-                gaussian = np.exp(-((xv - x) ** 2 + (yv - y) ** 2) / (2 * self.sigma ** 2))
-                self.gaussian_map += gaussian  # Accumulate Gaussian data
+                # Define the range in the gaussian_map to update
+                x_start = max(0, x - radius)
+                x_end = min(self.x_res, x + radius + 1)
+                y_start = max(0, y - radius)
+                y_end = min(self.y_res, y + radius + 1)
+
+                # Define the corresponding range in the gaussian_template
+                template_x_start = max(0, radius - x)
+                template_y_start = max(0, radius - y)
+                template_x_end = template_x_start + (x_end - x_start)
+                template_y_end = template_y_start + (y_end - y_start)
+
+                # Accumulate Gaussian data within the bounds
+                self.gaussian_map[y_start:y_end, x_start:x_end] += gaussian_template[template_y_start:template_y_end, template_x_start:template_x_end]
+
+
+        # # Modify #2: apply vectorize
+        # # Reset the Gaussian map with zeros array
+        # self.gaussian_map = np.zeros((self.x_res, self.y_res))
+
+        # num_samples = len(lidar_samples)
+        # angles = np.linspace(0, 2 * np.pi, num_samples)
+
+        # # Vectorize the function
+        # vectorized_apply_gaussian = np.vectorize(self.apply_gaussian)
+
+        # # Apply the vectorized function to all lidar samples and angles
+        # vectorized_apply_gaussian(lidar_samples, angles)
+
+        # temp_gau = self.gaussian_map.copy()
+
+        # # Original code
+        # # Reset the Gaussian map with JAX zeros array
+        # self.gaussian_map = np.zeros((self.x_res, self.y_res))
+
+        # num_samples = len(lidar_samples)
+        # angles = np.linspace(0, 2 * np.pi, num_samples)
+
+        # for i, distance in enumerate(lidar_samples):
+        #     if distance == 0:
+        #         continue
+
+        #     angle = angles[i]
+        #     y = int(self.y_center - distance * np.cos(angle))  # Adjust y-axis
+        #     x = int(self.x_center + distance * np.sin(angle))  # Adjust x-axis
+        #     if 0 <= x < self.x_res and 0 <= y < self.y_res:
+        #         xv, yv = np.meshgrid(np.arange(self.x_res), np.arange(self.y_res))
+        #         gaussian = np.exp(-((xv - x) ** 2 + (yv - y) ** 2) / (2 * self.sigma ** 2))
+        #         self.gaussian_map += gaussian  # Accumulate Gaussian data
+        
+        # difference = np.abs(temp_gau - self.gaussian_map)
+        # # print(f"Maximum difference: {np.max(difference)}")
+        # print(f"Average difference: {np.average(difference)}")
 
     def visualize_gaussian_map(self, optimal_angle, radius):
         plt.clf()  # Clear the previous figure
@@ -101,11 +170,20 @@ class GaussianMap:
         plt.colorbar(label='Intensity')
         plt.title('Gaussian Map with Decay')
 
-        angle_rad = np.radians(optimal_angle)
-        x_end = self.x_center - radius * np.cos(angle_rad)
+        angle_rad = np.radians(optimal_angle-90)
+        x_end = self.x_center + radius * np.cos(angle_rad)
         y_end = self.y_center + radius * np.sin(angle_rad)
-        print("optimal coord: ", x_end, y_end)
-        plt.plot(x_end *100, y_end *100, 'x', color='magenta', markersize=10, label='Optimal Direction')
+        plt.plot(x_end, y_end, 'x', color='magenta', markersize=10, label='Optimal Direction')
+
+        angle_rad_left = np.radians(-180)
+        x_end_left = self.x_center + radius * np.cos(angle_rad_left)
+        y_end_left = self.y_center + radius * np.sin(angle_rad_left)
+        plt.plot(x_end_left, y_end_left, 'x', color='blue', markersize=10, label='Left Bound')
+
+        angle_rad_right = np.radians(0)
+        x_end_right = self.x_center + radius * np.cos(angle_rad_right)
+        y_end_right = self.y_center + radius * np.sin(angle_rad_right)
+        plt.plot(x_end_right, y_end_right, 'x', color='yellow', markersize=10, label='Left Bound')
 
         plt.pause(0.001)  # Small pause to update the figure without blocking
 
@@ -129,10 +207,9 @@ class PathPlanner:
         """
         gaussian_map = self.gaussian_map.gaussian_map  # Assuming a 2D array of Gaussian values
         optimal_values = []  # To store summed Gaussian values for each angle
-        min_value_points = [] 
         
         # Iterate over the 180-degree half-circle in front (360 points for finer resolution)
-        for angle_deg in np.linspace(-90, 90, 360):  # -90 to 90 degrees relative to the car's heading
+        for angle_deg in np.linspace(-180, 0, 360):  # -180 to 0 degrees relative to the car's heading
             angle_rad = np.radians(angle_deg)
             
             # Calculate the end point of the line on the circle
@@ -145,20 +222,17 @@ class PathPlanner:
             
             # Get the Gaussian values at each sampled point
             gaussian_values = []
+            # for x, y in zip(x_samples, y_samples):
             for idx, (x, y) in enumerate(zip(x_samples, y_samples), start=1):
                 # Ensure the points are within bounds of the gaussian_map
-                # if idx % 10 == 0:
-                #     breakpoint()
-                if 0 <= x < self.gaussian_map.world_width and 0 <= y < self.gaussian_map.world_height:
-                    weighted_value = gaussian_map[int(y*self.gaussian_map.y_res), int(x*self.gaussian_map.x_res)] * (gamma ** idx)
-                    gaussian_values.append(weighted_value)
-                    # gaussian_values.append((weighted_value, int(x), int(y)))
+                if 0 <= int(x) < gaussian_map.shape[1] and 0 <= int(y) < gaussian_map.shape[0]:
+                    gaussian_values.append(gaussian_map[int(y), int(x)] * (gamma ** idx))
+                    # gaussian_values.append(gaussian_map[int(y), int(x)])
             
-            # # Get minimum Gaussian values for this direction
-            minimum_value = np.sum(gaussian_values)
-            optimal_values.append(minimum_value)
-    
-
+            # Sum the Gaussian values for this direction
+            total_value = np.argmax(gaussian_values)
+            optimal_values.append(total_value)
+        
         # Find the direction with the minimum Gaussian value
         optimal_index = np.argmin(optimal_values)
         optimal_direction = np.linspace(-90, 90, 360)[optimal_index]
@@ -176,13 +250,13 @@ def control_car(optimal_angle, speed):
     # Calculate the steering angle based on the optimal direction
     # Assuming `optimal_angle` is the angle in radians to turn towards
     # Normalize the angle to fit within -1.0 (left) and 1.0 (right) for the steering
+    optimal_angle_rad = np.radians(optimal_angle)
     max_turn_angle = np.pi / 4  # 45 degrees, adjust as needed
     steering_angle = np.clip(optimal_angle / max_turn_angle, -1.0, 1.0)
 
     # Send the control command to the car
     rc.drive.set_speed_angle(speed, steering_angle)
 
-import time
 def update_lidar_and_visualize():
     try:
         lidar_samples = rc.lidar.get_samples()  # Fetch new lidar data
@@ -191,19 +265,15 @@ def update_lidar_and_visualize():
         if lidar_samples is not None:
             start = time.time()
             gaussian_map.update_gaussian_map(lidar_samples)  # Update heatmap
-            # end = rc.get_delta_time()
-            print("accumulated_time:, ", time.time() - start)
-
+            print(time.time() - start)
             # Calculate the optimal path
             path_planner = PathPlanner(gaussian_map, gaussian_map.x_center, gaussian_map.y_center)
-            radius = 5.0/30.0
-            speed = 1
-            optimal_angle = path_planner.find_optimal_direction(radius)
-            print("optimal_angle: ", optimal_angle)
-            control_car(optimal_angle, speed)
+            optimal_angle = path_planner.find_optimal_direction(50)
+            control_car(optimal_angle, 0.5)
+            # control_car(0, 1)
+            print("angle: ", optimal_angle)
 
-
-        # gaussian_map.visualize_gaussian_map(optimal_angle, radius)  # Display the heatmap
+        gaussian_map.visualize_gaussian_map(optimal_angle, 50)  # Display the heatmap
 
     except ValueError as e:
         print(f"Error fetching LiDAR samples: {e}. Skipping this update.")
@@ -236,45 +306,46 @@ def update():
     # print("time: ", accumulated_time)
     
     # Control the RACECAR using the controller
-    if rc.controller.get_trigger(rc.controller.Trigger.RIGHT) > 0.5:
-        speed = speed_offset
-    elif rc.controller.get_trigger(rc.controller.Trigger.LEFT) > 0.5:
-        speed = -speed_offset
-    else:
-        speed = 0
+    # if rc.controller.get_trigger(rc.controller.Trigger.RIGHT) > 0.5:
+    #     speed = speed_offset
+    # elif rc.controller.get_trigger(rc.controller.Trigger.LEFT) > 0.5:
+    #     speed = -speed_offset
+    # else:
+    #     speed = 0
       
-    (x, y) = rc.controller.get_joystick(rc.controller.Joystick.LEFT)
-    if x > 0.5:
-        angle = angle_offset
-    elif x < -0.5:
-        angle = -angle_offset
-    else:
-        angle = 0
+    # (x, y) = rc.controller.get_joystick(rc.controller.Joystick.LEFT)
+    # if x > 0.5:
+    #     angle = angle_offset
+    # elif x < -0.5:
+    #     angle = -angle_offset
+    # else:
+    #     angle = 0
 
-    if rc.controller.was_pressed(rc.controller.Button.A):
-        speed_offset += 0.1
-        speed_offset = min(speed_offset, 1.0)
-        print(f"Speed Increased! Current Speed Offset: {speed_offset}")
+    # if rc.controller.was_pressed(rc.controller.Button.A):
+    #     speed_offset += 0.1
+    #     speed_offset = min(speed_offset, 1.0)
+    #     print(f"Speed Increased! Current Speed Offset: {speed_offset}")
     
-    if rc.controller.was_pressed(rc.controller.Button.B):
-        speed_offset -= 0.1
-        speed_offset = max(speed_offset, 0.0)
-        print(f"Speed Decreased! Current Speed Offset: {speed_offset}")
+    # if rc.controller.was_pressed(rc.controller.Button.B):
+    #     speed_offset -= 0.1
+    #     speed_offset = max(speed_offset, 0.0)
+    #     print(f"Speed Decreased! Current Speed Offset: {speed_offset}")
 
-    if rc.controller.was_pressed(rc.controller.Button.X):
-        angle_offset += 0.1
-        angle_offset = min(angle_offset, 1.0)
-        print(f"Angle Increased! Current Angle Offset: {angle_offset}")
+    # if rc.controller.was_pressed(rc.controller.Button.X):
+    #     angle_offset += 0.1
+    #     angle_offset = min(angle_offset, 1.0)
+    #     print(f"Angle Increased! Current Angle Offset: {angle_offset}")
     
-    if rc.controller.was_pressed(rc.controller.Button.Y):
-        angle_offset -= 0.1
-        angle_offset = max(angle_offset, 0.0)
-        print(f"Angle Decreased! Current Angle Offset: {angle_offset}")
+    # if rc.controller.was_pressed(rc.controller.Button.Y):
+    #     angle_offset -= 0.1
+    #     angle_offset = max(angle_offset, 0.0)
+    #     print(f"Angle Decreased! Current Angle Offset: {angle_offset}")
 
     # Send the speed and angle values to the RACECAR
-    rc.drive.set_speed_angle(speed, angle)
+    # rc.drive.set_speed_angle(speed, angle)
 
-    if accumulated_time >= UPDATE_INTERVAL:
+    # if accumulated_time >= UPDATE_INTERVAL:
+    if True:
         # print("time",  accumulated_time)
         update_lidar_and_visualize()
         accumulated_time = 0
@@ -287,7 +358,7 @@ def update():
 ########################################################################################
 
 if __name__ == "__main__":   
-    gaussian_map = GaussianMap(sigma=8.0/300.0, decay_rate=0.98)   
+    gaussian_map = GaussianMap(sigma=8, decay_rate=0.98)   
     plt.ion()  # Enable interactive mode for plotting
     rc.set_start_update(start, update)
     rc.go()
