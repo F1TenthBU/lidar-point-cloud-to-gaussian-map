@@ -175,6 +175,11 @@ class GaussianMap:
         y_end = self.y_center + radius * np.sin(angle_rad)
         plt.plot(x_end, y_end, 'x', color='magenta', markersize=10, label='Optimal Direction')
 
+        # angle_rad_detect = np.radians(optimal_angle-90)
+        # x_end_detect = self.x_center + radius* (current_detect_pt/70) * np.cos(angle_rad_detect)
+        # y_end_detect = self.y_center + radius * np.sin(angle_rad_detect)
+        # plt.plot(x_end_detect, y_end_detect, 'x', color='yellow', markersize=10, label='Left Bound')
+
         angle_rad_left = np.radians(-180)
         x_end_left = self.x_center + radius * np.cos(angle_rad_left)
         y_end_left = self.y_center + radius * np.sin(angle_rad_left)
@@ -184,6 +189,8 @@ class GaussianMap:
         x_end_right = self.x_center + radius * np.cos(angle_rad_right)
         y_end_right = self.y_center + radius * np.sin(angle_rad_right)
         plt.plot(x_end_right, y_end_right, 'x', color='yellow', markersize=10, label='Left Bound')
+
+
 
         plt.pause(0.001)  # Small pause to update the figure without blocking
 
@@ -196,7 +203,7 @@ class PathPlanner:
         self.x_center = x_center
         self.y_center = y_center
 
-    def find_optimal_direction(self, radius, gamma=0.96):
+    def find_optimal_direction(self, radius, gamma=0.99):
         """
         Find the optimal direction to go based on the Gaussian map within a half-circle.
         Parameters:
@@ -207,7 +214,9 @@ class PathPlanner:
         """
         gaussian_map = self.gaussian_map.gaussian_map  # Assuming a 2D array of Gaussian values
         optimal_values = []  # To store summed Gaussian values for each angle
-        
+
+        """ Original code begin
+        """
         # Iterate over the 180-degree half-circle in front (360 points for finer resolution)
         for angle_deg in np.linspace(-180, 0, 360):  # -180 to 0 degrees relative to the car's heading
             angle_rad = np.radians(angle_deg)
@@ -232,10 +241,57 @@ class PathPlanner:
             # Sum the Gaussian values for this direction
             total_value = np.argmax(gaussian_values)
             optimal_values.append(total_value)
-        
+
+            print("total_value: ", total_value)
+            print("optimal_values: ", optimal_values[:10])
+
         # Find the direction with the minimum Gaussian value
         optimal_index = np.argmin(optimal_values)
         optimal_direction = np.linspace(-90, 90, 360)[optimal_index]
+        print("angle now: ", optimal_direction)
+        """ Original code end
+        """
+
+        """ Vectorized code begin
+        """
+        # # Define the angles for the 180-degree half-circle
+        # angle_deg = np.linspace(-180, 0, 360)
+        # angle_rad = np.radians(angle_deg)
+
+        # # Calculate the end points (x_end, y_end) for each angle in vectorized form
+        # x_end = self.x_center + radius * np.cos(angle_rad)
+        # y_end = self.y_center + radius * np.sin(angle_rad)
+
+        # # Generate 50 points along the line from (x_end, y_end) to the car's center in vectorized form
+        # num_samples = 100
+        # x_samples = np.linspace(self.x_center, x_end[:, np.newaxis], num_samples)
+        # y_samples = np.linspace(self.y_center, y_end[:, np.newaxis], num_samples)
+        
+        # # Ensure the samples are within the Gaussian map bounds
+        # x_indices = np.clip(x_samples.astype(int), 0, gaussian_map.shape[1] - 1)
+        # y_indices = np.clip(y_samples.astype(int), 0, gaussian_map.shape[0] - 1)
+
+        # # Get the Gaussian values at each sampled point and apply the gamma weighting
+        # idx_array = np.arange(1, num_samples + 1)  # Array for the exponent index
+        # gamma_weights = gamma ** idx_array  # Apply gamma weighting
+        # weighted_values = gaussian_map[y_indices, x_indices] * gamma_weights
+
+        # # Get the maximum weighted Gaussian values along each line to get the total value per angle
+        # total_values = np.max(weighted_values, axis=1)
+        # # current_detect_pt = np.argmax(weighted_values, axis=1)
+        # # print("current_detect_pt: ", current_detect_pt[0])
+        # print("total_values: ", total_values[:10])
+
+        # # Find the angle with the minimum total Gaussian value
+        # optimal_index = np.argmin(total_values)
+        # # current_detect_pt_idx = current_detect_pt[optimal_index]
+        # # print("current_detect_pt_idx: ", current_detect_pt_idx)
+        # optimal_direction = angle_deg[optimal_index] + 180
+        # print("angel before 180: ", optimal_direction -180)
+        # print("angel now: ", optimal_direction)
+
+        """ Vectorized code end
+        """
         
         return optimal_direction
 
@@ -250,7 +306,7 @@ def control_car(optimal_angle, speed):
     # Calculate the steering angle based on the optimal direction
     # Assuming `optimal_angle` is the angle in radians to turn towards
     # Normalize the angle to fit within -1.0 (left) and 1.0 (right) for the steering
-    optimal_angle_rad = np.radians(optimal_angle)
+    # optimal_angle_rad = np.radians(optimal_angle)
     max_turn_angle = np.pi / 4  # 45 degrees, adjust as needed
     steering_angle = np.clip(optimal_angle / max_turn_angle, -1.0, 1.0)
 
@@ -265,15 +321,17 @@ def update_lidar_and_visualize():
         if lidar_samples is not None:
             start = time.time()
             gaussian_map.update_gaussian_map(lidar_samples)  # Update heatmap
-            print(time.time() - start)
+            # print(time.time() - start)
             # Calculate the optimal path
             path_planner = PathPlanner(gaussian_map, gaussian_map.x_center, gaussian_map.y_center)
-            optimal_angle = path_planner.find_optimal_direction(50)
+            radius = 50
+            optimal_angle = path_planner.find_optimal_direction(radius)
             control_car(optimal_angle, 0.5)
             # control_car(0, 1)
+            print(time.time() - start)
             print("angle: ", optimal_angle)
 
-        gaussian_map.visualize_gaussian_map(optimal_angle, 50)  # Display the heatmap
+        gaussian_map.visualize_gaussian_map(optimal_angle, radius)  # Display the heatmap
 
     except ValueError as e:
         print(f"Error fetching LiDAR samples: {e}. Skipping this update.")
